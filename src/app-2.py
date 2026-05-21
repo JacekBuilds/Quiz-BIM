@@ -3,7 +3,6 @@ import random
 import os
 import datetime
 import gdown
-import requests
 from dotenv import load_dotenv
 from parser import parse_markdown_files
 
@@ -12,12 +11,6 @@ load_dotenv()
 DATA_DIR = os.getenv("DATA_DIR", "data/input_md")
 APP_TITLE = os.getenv("APP_TITLE", "Quiz Interaktywny")
 GDRIVE_URL = os.getenv("GDRIVE_URL", "")
-
-# --- KONFIGURACJA GITHUBA ---
-# Pobiera dane z pliku .env (lokalnie) lub z sekcji Secrets (w Streamlit Cloud)
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-REPO_OWNER = os.getenv("REPO_OWNER", "")
-REPO_NAME = os.getenv("REPO_NAME", "")
 
 st.set_page_config(page_title=APP_TITLE, layout="centered")
 
@@ -39,38 +32,18 @@ def load_data():
     return parse_markdown_files(DATA_DIR)
 
 
-# --- FUNKCJA ZAPISU ZGŁOSZEŃ (WYSYŁKA NA GITHUB ISSUES) ---
+# --- FUNKCJA ZAPISU ZGŁOSZEŃ ---
 def zapisz_zgloszenie(pytanie_data, komentarz):
-    if not GITHUB_TOKEN or not REPO_OWNER or not REPO_NAME:
-        print("Brak pełnej konfiguracji GitHuba (TOKEN, OWNER, NAME).")
-        return False
+    log_dir = "data/logs"
+    os.makedirs(log_dir, exist_ok=True)
+    filepath = os.path.join(log_dir, "zgloszenia.txt")
 
-    url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/issues"
-
-    headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json",
-    }
-
-    tytul = f"Błąd w pytaniu - Dział: {pytanie_data.get('category', 'Brak')}"
-
-    tresc = (
-        f"### 💬 Komentarz użytkownika:\n{komentarz}\n\n"
-        f"### 📝 Treść pytania w aplikacji:\n*{pytanie_data.get('question', 'Brak')}*\n\n"
-        f"### 🔍 Surowy tekst z bazy (do łatwej poprawy):\n"
-        f"```markdown\n{pytanie_data.get('raw_text', 'Brak surowego tekstu')}\n```\n\n"
-        f"--- \n"
-        f"*Zgłoszenie wygenerowane automatycznie przez aplikację Quiz.*"
-    )
-
-    payload = {"title": tytul, "body": tresc, "labels": ["bug"]}
-
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        return response.status_code == 201
-    except Exception as e:
-        print(f"Błąd wysyłania do GitHub Issues: {e}")
-        return False
+    with open(filepath, "a", encoding="utf-8") as f:
+        f.write(f"--- DATA: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+        f.write(f"KOMENTARZ UŻYTKOWNIKA: {komentarz}\n")
+        f.write("--- SUROWE PYTANIE Z BAZY ---\n")
+        f.write(f"{pytanie_data.get('raw_text', 'Brak surowego tekstu')}\n")
+        f.write("=" * 50 + "\n\n")
 
 
 # --- INICJALIZACJA STANÓW SESJI ---
@@ -184,8 +157,11 @@ def main():
                 else:
                     st.warning("Musisz zaznaczyć odpowiedź przed zatwierdzeniem!")
 
+
         else:
+
             # --- WYSZUKIWANIE PEŁNEJ TREŚCI ODPOWIEDZI ---
+
             pelna_poprawna = next(
                 (ans for ans in current_q['answers']
                  if ans.lower().startswith(current_q['correct_letter'] + ")")),
@@ -206,28 +182,21 @@ def main():
                 st.success(f"✅ Poprawna odpowiedź: **{pelna_poprawna}**")
             else:
                 st.error(f"❌ Zła odpowiedź. Poprawna to: **{pelna_poprawna}**")
-
-            # Uzasadnienie
+            # Uzasadnienie ukryte defaultowo (expanded=False)
             with st.expander("📖 Zobacz uzasadnienie", expanded=False):
                 st.write(current_q['justification'])
-
-            # Formularz zgłoszeniowy (z obsługą API GitHuba)
+            # Brak st.divider() - bezpośrednio pod formularz zgłoszeniowy
             with st.expander("⚠️ Zgłoś błąd w tym pytaniu"):
                 with st.form(key=f"zgloszenie_{st.session_state.current_index}"):
                     komentarz_usera = st.text_area(
                         "Co jest nie tak? (np. zła odpowiedź, literówka, niejasne uzasadnienie)")
-                    wyslano = st.form_submit_button("Wyślij zgłoszenie na GitHub")
-
+                    wyslano = st.form_submit_button("Wyślij zgłoszenie")
                     if wyslano:
                         if komentarz_usera.strip() == "":
                             st.warning("Wpisz jakiś komentarz przed wysłaniem.")
                         else:
-                            sukces = zapisz_zgloszenie(current_q, komentarz_usera)
-                            if sukces:
-                                st.success("Dzięki! Zgłoszenie zostało utworzone jako Issue na GitHubie.")
-                            else:
-                                st.error(
-                                    "Brak połączenia z GitHubem. Sprawdź, czy masz skonfigurowane zmienne (TOKEN, OWNER, NAME).")
+                            zapisz_zgloszenie(current_q, komentarz_usera)
+                            st.success("Dzięki! Zgłoszenie zostało zapisane w logach.")
 
             if st.button("Następne pytanie", type="primary"):
                 st.session_state.current_index += 1
